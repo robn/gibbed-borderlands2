@@ -81,20 +81,46 @@ namespace Gibbed.Borderlands2.FileFormats
         }
         #endregion
 
+        public byte[] PadUncompressedBytesForVita(byte[] uncompressedBytes)
+        {
+            var vitaUncompressedBytesSize = (65516); //64 kilobytes minus 20 bytes for hash header
+
+            var vitaUncompressedBytes = new byte[vitaUncompressedBytesSize];
+
+            int index = 0;
+
+            foreach (byte b in vitaUncompressedBytes)
+            {
+                if (index < uncompressedBytes.Length)
+                {
+                    vitaUncompressedBytes[index] = uncompressedBytes[index];
+                }
+                else
+                {
+                    vitaUncompressedBytes[index] = 0;
+                }
+
+                index++;
+            }
+
+            return vitaUncompressedBytes;
+        }
+
         public const int BlockSize = 0x40000;
 
         public void Serialize(Stream output)
         {
             var saveGame = this.SaveGame;
 
-            if (this.Platform != Platform.PC &&
-                this.Platform != Platform.X360 &&
-                this.Platform != Platform.PS3)
+            if (Platform != Platform.PC &&
+                Platform != Platform.X360 &&
+                Platform != Platform.PS3 &&
+                Platform != Platform.Vita)
             {
                 throw new InvalidOperationException("unsupported platform");
             }
 
-            var endian = this.Platform == Platform.PC ? Endian.Little : Endian.Big;
+            var endian = (Platform == Platform.PC || Platform == Platform.Vita) ? Endian.Little : Endian.Big;
 
             byte[] innerUncompressedBytes;
             using (var innerUncompressedData = new MemoryStream())
@@ -135,8 +161,8 @@ namespace Gibbed.Borderlands2.FileFormats
 
             if (innerCompressedBytes.Length <= BlockSize)
             {
-                if (this.Platform == Platform.PC ||
-                    this.Platform == Platform.X360)
+                if (Platform == Platform.PC ||
+                    Platform == Platform.X360)
                 {
                     compressedBytes = new byte[innerCompressedBytes.Length +
                                                (innerCompressedBytes.Length / 16) + 64 + 3];
@@ -155,7 +181,8 @@ namespace Gibbed.Borderlands2.FileFormats
 
                     Array.Resize(ref compressedBytes, actualCompressedSize);
                 }
-                else if (this.Platform == Platform.PS3)
+                else if (Platform == Platform.PS3 ||
+                         Platform == Platform.Vita)
                 {
                     using (var temp = new MemoryStream())
                     {
@@ -175,8 +202,8 @@ namespace Gibbed.Borderlands2.FileFormats
             }
             else
             {
-                if (this.Platform == Platform.PC ||
-                    this.Platform == Platform.X360)
+                if (Platform == Platform.PC ||
+                    Platform == Platform.X360)
                 {
                     int innerCompressedOffset = 0;
                     int innerCompressedSizeLeft = innerCompressedBytes.Length;
@@ -226,7 +253,8 @@ namespace Gibbed.Borderlands2.FileFormats
                         compressedBytes = blockData.ReadBytes((uint)blockData.Length);
                     }
                 }
-                else if (this.Platform == Platform.PS3)
+                else if (Platform == Platform.PS3 ||
+                         Platform == Platform.Vita)
                 {
                     int innerCompressedOffset = 0;
                     int innerCompressedSizeLeft = innerCompressedBytes.Length;
@@ -286,6 +314,12 @@ namespace Gibbed.Borderlands2.FileFormats
                 uncompressedData.Position = 0;
                 uncompressedBytes = uncompressedData.ReadBytes((uint)uncompressedData.Length);
             }
+            
+            //Vita version expects 64kb save files.
+            if (Platform == Platform.Vita)
+            {
+                uncompressedBytes = PadUncompressedBytesForVita(uncompressedBytes);
+            }
 
             byte[] computedHash;
             using (var sha1 = new System.Security.Cryptography.SHA1Managed())
@@ -310,23 +344,27 @@ namespace Gibbed.Borderlands2.FileFormats
         {
             if (platform != Platform.PC &&
                 platform != Platform.X360 &&
-                platform != Platform.PS3)
+                platform != Platform.PS3 &&
+                platform != Platform.Vita)
             {
                 throw new ArgumentException("unsupported platform", "platform");
             }
+
+            //Need a better way to determine if it's a Vita save
+            platform = (input.Length == 65536) ? Platform.Vita : platform;
 
             if (input.Position + 20 > input.Length)
             {
                 throw new SaveCorruptionException("not enough data for save header");
             }
-
+            
             var check = input.ReadValueU32(Endian.Big);
             if (check == 0x434F4E20)
             {
                 throw new SaveFormatException("cannot load XBOX 360 CON files, extract save using Modio or equivalent");
             }
             input.Seek(-4, SeekOrigin.Current);
-
+            
             var readSha1Hash = input.ReadBytes(20);
             using (var data = input.ReadToMemoryStream(input.Length - 20))
             {
@@ -337,7 +375,8 @@ namespace Gibbed.Borderlands2.FileFormats
                 }
 
                 if ((settings & DeserializeSettings.IgnoreSha1Mismatch) == 0 &&
-                    readSha1Hash.SequenceEqual(computedSha1Hash) == false)
+                    readSha1Hash.SequenceEqual(computedSha1Hash) == false &&
+                    platform != Platform.Vita)
                 {
                     throw new SaveCorruptionException("invalid SHA1 hash");
                 }
@@ -443,7 +482,7 @@ namespace Gibbed.Borderlands2.FileFormats
                             throw new SaveCorruptionException("LZO decompression failure (uncompressed size left != 0)");
                         }
                     }
-                    else if (platform == Platform.PS3)
+                    else if (platform == Platform.PS3 || platform == Platform.Vita)
                     {
                         var blockCount = data.ReadValueU32(Endian.Big);
                         var blockInfos = new List<Tuple<uint, uint>>();
@@ -502,7 +541,7 @@ namespace Gibbed.Borderlands2.FileFormats
 
                 using (var outerData = new MemoryStream(uncompressedBytes))
                 {
-                    var endian = platform == Platform.PC ? Endian.Little : Endian.Big;
+                    var endian = (platform == Platform.PC || platform == Platform.Vita) ? Endian.Little : Endian.Big;
 
                     var innerSize = outerData.ReadValueU32(Endian.Big);
                     var magic = outerData.ReadString(3);

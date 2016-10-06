@@ -29,6 +29,7 @@ namespace Gibbed.Borderlands2.GameInfo
         PC,
         X360,
         PS3,
+        Vita
         // ReSharper restore InconsistentNaming
     }
 }
